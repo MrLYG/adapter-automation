@@ -1,20 +1,20 @@
 # Adapter automation
 
-Reusable workflows and reviewer guidance for Harbor adapters. Adapter source,
-acceptance requirements, author tools, and parity evidence remain in
+This repository contains shared workflows and the full adapter review guide.
+Adapter code, requirements, author tools, and experiment results live in
 [harbor-framework/adapters](https://github.com/harbor-framework/adapters).
 
 ## Adapter review
 
-The reusable `.github/workflows/adapter-review.yml` performs structural validation
-and read-only Claude review, then publishes results on the caller's PR. It uses
-the caller's GitHub context, existing model secrets, and current Claude action
-authentication. The model API key and endpoint stay configured for the caller;
-this repository does not need copies of those credentials.
+`.github/workflows/adapter-review.yml` checks adapter structure, asks Claude to
+review the code, and posts the results on the adapter PR. It uses the existing
+API key, endpoint, and GitHub authentication from the adapters repository.
+Claude reads the submitted files and returns a report; it cannot run adapter
+code or change files.
 
-The caller owns event handling and authorization. The adapters caller retains
-the existing `/review-adapter` comment and author-association checks. This
-workflow does not add label, push, or automatic PR invocation.
+To request a review, comment `/review-adapter` on the adapter PR. The workflow in
+`adapters` checks who posted the comment before calling this workflow. The
+existing trigger and permission checks stay in place.
 
 Call it with a full commit SHA in both places:
 
@@ -36,54 +36,51 @@ jobs:
       ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
 ```
 
-`automation-ref` pins the checkout containing reviewer guidance to the same
-revision as the workflow. Pass the two existing model secrets explicitly because
-the caller and this repository are in different organizations. `GITHUB_TOKEN`
-is supplied by GitHub for the caller; the Claude action retains its existing
-GitHub App token exchange and `id-token: write` permission. No new model federation,
-PAT, or application installation is introduced by this migration.
+Use the same full commit SHA for the workflow reference and `automation-ref`.
+This makes the workflow and review guide come from the same version.
+Pass the existing model secrets by name because the repositories are in different
+organizations. GitHub supplies `GITHUB_TOKEN` for the adapters repository. The
+Claude action continues to use its existing GitHub App token exchange, which
+requires `id-token: write`.
 
-The caller's Actions policy must permit this public reusable workflow and its
-existing dependencies. A reference to reusable YAML does not check out its
-repository automatically; the workflow checks it out explicitly.
+The adapters repository's Actions settings must allow this public workflow and
+the actions it uses. The workflow checks out this repository to read the guide;
+GitHub does not do that automatically for reusable workflows.
 
-## Source ownership
+## Files used during a review
 
-| Source | Revision used during review |
+| Files | Version |
 | --- | --- |
-| Workflow and `skills/review-adapter/SKILL.md` | The caller's full automation SHA |
-| `scripts/validate_adapter.py`, `docs/adapters.mdx`, and shared parity diagnostics | The trusted caller revision, `github.sha` |
+| Workflow and `skills/review-adapter/SKILL.md` | The automation commit selected in `adapters` |
+| `scripts/validate_adapter.py`, `docs/adapters.mdx`, and shared parity diagnostics | The trusted adapters revision, `github.sha` |
 | Submitted adapter files | The PR head SHA resolved at the start of validation |
 
-The validator is executed from `trusted-adapters/` against files in `reviewed-pr/`.
-The PR's own validator and review instructions cannot replace the accepted ones.
-The AI job requires successful structural validation and checks PR freshness
-before reviewing and again before publishing. Reviews identify the adapter and
-contract revisions, and the prompt records the automation revision.
+The workflow runs the validator from `trusted-adapters/` against the submitted
+files in `reviewed-pr/`. This prevents a PR from changing its own validation rules.
+Claude review starts after structural validation passes. Before reviewing and
+posting the report, the workflow checks that the PR is still open and unchanged.
+The report identifies the reviewed commit and specification version; the prompt
+also records the automation commit.
 
-Shared diagnostics normally come from `docs/parity-diagnostics.md` in the caller.
-The loader also accepts the previous
-`skills/review-adapter/references/parity-diagnostics.md` location so the automation
-can land before the adapter-side documentation move.
+Shared diagnostics come from `docs/parity-diagnostics.md` in `adapters`. The
+workflow also accepts the old `skills/review-adapter/references/parity-diagnostics.md`
+path, so this workflow can be merged before the adapter documentation moves.
 
-## Migration and future workflows
+Authors can still start a self-review from `skills/review-adapter/SKILL.md` in
+their adapters checkout. That entry loads the full guide from the automation
+commit selected by CI. The guide is maintained here, so authors need access to
+GitHub to read it.
 
-Merge the automation change before switching the adapter caller. The consumer
-must pin a commit retained in this repository; if the automation PR is squash
-merged, update both consumer pins to the resulting commit before merging the
-consumer PR. Preserve the current adapter workflow until that cutover.
+## Updating the workflow
 
-The adapter contract, local validator, author skills, and contract tests stay
-with the adapter repository. Workflow tests and reviewer policy live here.
-Changes proposed in adapters PRs #59 (pagination/report guidance) and #69
-(baseline-aware validation) remain separate from this migration and need to be
-reconciled with the shared implementation when those changes land.
+Merge workflow changes here before updating `adapters`. Then set both references
+in the adapters workflow to the resulting commit SHA. If a PR is squash-merged,
+use the new commit created by that merge. Keep the current adapters workflow in
+place until the replacement is ready.
 
-Additional workflows can be added alongside this one with `workflow_call`.
-Future invocation methods can resolve a PR number in the caller and pass it to
-an appropriate workflow. Claude's current comment-event handling must also be
-checked when adding another invocation method. Upgrading the consumer pin is an
-explicit rollout step.
+New workflows can be added here with `workflow_call`. To support another trigger,
+update the adapters workflow to handle that event and pass the PR number. Check
+that the Claude action supports the new event too.
 
 ## Development
 
@@ -94,12 +91,13 @@ python -m pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
 ```
 
-The tests execute the trusted-input loader, validator invocation, and report
-publishing steps with local fixtures and a fake GitHub client. They cover changed
-or closed PRs, comment ownership, newer structural reports, and empty model
-reports without invoking a model or writing to GitHub. The test workflow runs
-these checks on PRs and pushes to `main`.
+The tests run the guidance loader, validator command, and report-publishing steps
+against local files and a fake GitHub client. They check what happens when a PR
+changes or closes, a newer report already exists, or the model returns an empty
+report. They also check that structural validation updates only its own comments.
+The tests run on PRs and pushes to `main`; they do not call a model or post to
+GitHub.
 
-After cutover, verify one authorized `/review-adapter` request in the adapter
-repository. Local tests cannot verify the existing Claude App token exchange in
-a live reusable-workflow run.
+After switching the adapters workflow, try one authorized `/review-adapter`
+request. A live run is needed to check that the existing Claude App token exchange
+works through the reusable workflow.
