@@ -174,6 +174,13 @@ The config runs 15 concurrent trials on Daytona, as in the experiment (the origi
 
 The Harbor score of a run is the mean reward over the 100 tasks (×100 for %), which equals EvoEval's pass@1 for one greedy sample.
 
+Links:
+- Original benchmark: https://github.com/evo-eval/evoeval
+- Original-side fork: https://github.com/MrLYG/evoeval/tree/harbor-parity-autoadapter (changes against upstream: https://github.com/evo-eval/evoeval/compare/main...MrLYG:evoeval:harbor-parity-autoadapter)
+- Adapter PR: https://github.com/harbor-index/adapter-automation/pull/3
+- Dataset PR: https://github.com/harbor-framework/harbor-datasets/pull/273
+- Parity results PR: https://huggingface.co/datasets/harborframework/parity-experiments/discussions/277 (no files yet: the Hub repository is over its file limit and refuses new files)
+
 ## Notes & Caveats
 
 - **Request time limit.** The original sets `signal.alarm(900)` around each request (a timed-out request is aborted and retried); `evoeval-codegen` cancels each request after the same 900 seconds (`asyncio.wait_for`) with the same retry rules. Both sides use the `openai` SDK client defaults (`openai==3.46.0`).
