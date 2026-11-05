@@ -218,3 +218,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# Local environments and interpreter output, not project source or fixtures.
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.env.local
+
+# Repository-root runtime output. Do not ignore nested templates or test data.
+/tmp/
+/jobs/
+/trials/
+/tasks/
+/datasets/
+/parity-experiments/
