@@ -1,103 +1,123 @@
-# Adapter automation
+# Harbor Adapters
 
-This repository contains shared workflows and the full adapter review guide.
-Adapter code, requirements, author tools, and experiment results live in
-[harbor-framework/adapters](https://github.com/harbor-framework/adapters).
+ [![](https://dcbadge.limes.pink/api/server/https://discord.gg/QVvyhRw5UQ)](https://discord.gg/QVvyhRw5UQ)
+[![Docs](https://img.shields.io/badge/Docs-000000?style=for-the-badge&logo=mdbook&color=105864)](https://harborframework.com/docs)
+[![Cookbook](https://img.shields.io/badge/Cookbook-000000?style=for-the-badge&logo=mdbook&color=105864)](https://github.com/harbor-framework/harbor-cookbook)
+[![DOI](https://zenodo.org/badge/1032170083.svg)](https://doi.org/10.5281/zenodo.20953922)
 
-## Adapter review
+Release blog: https://harbor-index.org/
 
-`.github/workflows/adapter-review.yml` checks adapter structure, asks Claude to
-review the code, and posts the results on the adapter PR. It uses the existing
-API key, endpoint, and GitHub authentication from the adapters repository.
-Claude reads the submitted files and returns a report; it cannot run adapter
-code or change files.
+Paper: https://arxiv.org/abs/2609.04298
 
-To request a review, comment `/review-adapter` on the adapter PR. The workflow in
-`adapters` checks who posted the comment before calling this workflow. The
-existing trigger and permission checks stay in place.
+---
 
-Call it with a full commit SHA in both places:
+This repository is the standalone home for **Harbor adapters** — the code that converts
+external benchmarks into
+[Harbor](https://github.com/harbor-framework/harbor)'s task format so they can be run, scored, and
+shared through the Harbor harness. It was split out of the main
+[`harbor-framework/harbor`](https://github.com/harbor-framework/harbor) monorepo so adapters can be
+versioned and contributed independently.
 
-```yaml
-jobs:
-  review:
-    # Keep the caller's existing event and authorization condition here.
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: read
-      id-token: write
-    uses: harbor-index/adapter-automation/.github/workflows/adapter-review.yml@<automation-sha>
-    with:
-      pr-number: ${{ github.event.issue.number }}
-      automation-ref: <automation-sha>
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+Harbor itself — the CLI and evaluation framework — lives in
+[`harbor-framework/harbor`](https://github.com/harbor-framework/harbor) and is an **external
+dependency** of this repo (install with `uv tool install harbor`). See the
+[Harbor docs](https://harborframework.com/docs) and the
+[Harbor Cookbook](https://github.com/harbor-framework/harbor-cookbook) for the framework itself.
+
+## What is an adapter?
+
+An adapter translates a benchmark into Harbor **tasks**. Each generated task is a directory with:
+
+- `task.toml` — configuration and metadata
+- `instruction.md` — the natural-language task given to the agent
+- `environment/` — Dockerfile / environment definition
+- `tests/` — verification scripts (`test.sh` writes the reward to `/logs/verifier/reward.txt`)
+- `solution/` (optional) — the oracle / reference solution
+
+An adapter's job is to parse an upstream benchmark and emit those task directories reproducibly.
+
+## Repository structure
+
+```
+adapters/
+├── src/                       # one directory per adapter — the heart of this repo
+│   └── <adapter-name>/        # a self-contained, independent uv project
+│       ├── pyproject.toml            # package name = "harbor-<adapter-name>-adapter"
+│       ├── uv.lock                   # each adapter locks its own dependencies
+│       ├── README.md                 # adapter docs (parity results, reproduction, notes)
+│       ├── parity_experiment.json    # parity results vs. the original benchmark
+│       ├── adapter_metadata.json     # adapter metadata
+│       ├── <adapter-name>.yaml       # reference config for running the adapter
+│       └── src/<adapter_name>/       # the Python package (dashes → underscores)
+│           ├── adapter.py            # task-generation logic (<AdapterName>Adapter class)
+│           ├── main.py               # CLI entry point (--output-dir/--limit/--overwrite/--task-ids)
+│           └── task-template/        # task.toml, instruction.md, environment/, solution/, tests/
+├── docs/                      # adapter authoring guides (see Documentation below)
+├── skills/                    # Agent skills for adapter work
+├── scripts/                   # Helper scripts (validation, parity summary)
+└── .github/workflows/         # CI: adapter review + parity summary
 ```
 
-Use the same full commit SHA for the workflow reference and `automation-ref`.
-This makes the workflow and review guide come from the same version.
-Pass the existing model secrets by name because the repositories are in different
-organizations. GitHub supplies `GITHUB_TOKEN` for the adapters repository. The
-Claude action continues to use its existing GitHub App token exchange, which
-requires `id-token: write`.
+Every adapter under `src/` is an **independent [uv](https://docs.astral.sh/uv/) project** with its
+own `pyproject.toml` and `uv.lock`. There is no repo-wide virtualenv or lockfile — you work inside a
+single adapter directory. This mirrors the layout described in
+[`docs/adapters.mdx`](docs/adapters.mdx).
 
-The adapters repository's Actions settings must allow this public workflow and
-the actions it uses. The workflow checks out this repository to read the guide;
-GitHub does not do that automatically for reusable workflows.
+## Installation
 
-## Files used during a review
-
-| Files | Version |
-| --- | --- |
-| Workflow and `skills/review-adapter/SKILL.md` | The automation commit selected in `adapters` |
-| `scripts/validate_adapter.py`, `docs/adapters.mdx`, and shared parity diagnostics | The trusted adapters revision, `github.sha` |
-| Submitted adapter files | The PR head SHA resolved at the start of validation |
-
-The workflow runs the validator from `trusted-adapters/` against the submitted
-files in `reviewed-pr/`. This prevents a PR from changing its own validation rules.
-Claude review starts after structural validation passes. Before reviewing and
-posting the report, the workflow checks that the PR is still open and unchanged.
-The report identifies the reviewed commit and specification version; the prompt
-also records the automation commit.
-
-Shared diagnostics come from `docs/parity-diagnostics.md` in `adapters`. The
-workflow also accepts the old `skills/review-adapter/references/parity-diagnostics.md`
-path, so this workflow can be merged before the adapter documentation moves.
-
-Authors can still start a self-review from `skills/review-adapter/SKILL.md` in
-their adapters checkout. That entry loads the full guide from the automation
-commit selected by CI. The guide is maintained here, so authors need access to
-GitHub to read it.
-
-## Updating the workflow
-
-Merge workflow changes here before updating `adapters`. Then set both references
-in the adapters workflow to the resulting commit SHA. If a PR is squash-merged,
-use the new commit created by that merge. Keep the current adapters workflow in
-place until the replacement is ready.
-
-New workflows can be added here with `workflow_call`. To support another trigger,
-update the adapters workflow to handle that event and pass the PR number. Check
-that the Claude action supports the new event too.
-
-## Development
-
-Use Python 3.12+ and Node.js 22+:
+Install the Harbor CLI (the harness that runs the tasks these adapters generate):
 
 ```bash
-python -m pip install -r requirements-dev.txt
-python -m unittest discover -s tests -v
+uv tool install harbor
+# or: pip install harbor
 ```
 
-The tests run the guidance loader, validator command, and report-publishing steps
-against local files and a fake GitHub client. They check what happens when a PR
-changes or closes, a newer report already exists, or the model returns an empty
-report. They also check that structural validation updates only its own comments.
-The tests run on PRs and pushes to `main`; they do not call a model or post to
-GitHub.
+## Using an adapter
 
-After switching the adapters workflow, try one authorized `/review-adapter`
-request. A live run is needed to check that the existing Claude App token exchange
-works through the reusable workflow.
+Each adapter generates task directories you can then run with Harbor:
+
+```bash
+cd src/<adapter-name>
+uv sync                                              # install this adapter's deps
+uv run <adapter-name> --output-dir /path/to/output   # generate task directories
+```
+
+`uv run <adapter-name>` maps to `<adapter_name>.main:main` via the adapter's `[project.scripts]`.
+Once the tasks exist, run them with the Harbor harness, e.g.:
+
+```bash
+harbor run -p /path/to/output -a claude-code -m "anthropic/claude-opus-5"
+```
+
+See a specific adapter's own `README.md` for its exact commands, parity results, and any special
+setup.
+
+## Creating a new adapter
+
+Use the **create-adapter** skill in [`skills/create-adapter/`](skills/create-adapter/) — it scaffolds
+the adapter with `harbor adapter init` and hands off to the authoritative spec,
+[`docs/adapters.mdx`](docs/adapters.mdx). New adapters must live at `src/<adapter-name>/`.
+
+Key conventions (enforced by [`scripts/validate_adapter.py`](scripts/validate_adapter.py)):
+
+- `pyproject.toml` `name` = `harbor-<folder>-adapter`.
+- `[project.scripts]` has `<folder> = "<adapter_name>.main:main"`.
+- Adapter code lives at `src/<adapter_name>/` (dashes → underscores); `adapter.py` defines an
+  `<AdapterName>Adapter` class whose `run(self)` writes tasks under `self.output_dir`.
+- Task names must be stable across runs and unique / registry-safe.
+
+## Citation
+
+If you use **Harbor adapters** in academic work, please cite the paper:
+
+```bibtex
+@misc{shi2026harbor,
+  title         = {Harbor Adapters and Harbor-Index: Infrastructure and a Curated Meta-Dataset for Large-Scale Agentic Evaluation},
+  author        = {Shi, Lin and Lin, Haowei and Zhu, Zixuan and Zhou, Xiaoyue and Li, Xiang and Lin, Xiangning and Deng, Yaxuan and Xu, Han and Li, Yuangang and Li, Shanda and Chen, Zizhao and Xing, Hanwen and Raj, Harsh and Chen, Bo and Shi, Quan and Dillmann, Steven and Gao, Yipeng and Khanna, Puneesh and Lu, Ruofan and Zhou, Chao Beyond and Yang, Michael and Zhang, Robert and Chai, Siyuan and Chang, Jiayu and Chen, Yizhao and Chen, Xiaokun and Dai, Yiwei and Yang, Wenting and Liu, Hange and Liu, Minghao and Wang, Zihan and others},
+  year          = {2026},
+  eprint        = {2609.04298},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.LG},
+  url           = {https://arxiv.org/abs/2609.04298}
+}
+```
