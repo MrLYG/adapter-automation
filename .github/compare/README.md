@@ -67,15 +67,13 @@ Repository secrets (Settings > Secrets and variables > Actions > Secrets):
 | `ANTHROPIC_BASE_URL` | Claude gateway URL, without `/v1` |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | JSON key of a Google service account |
 
-Share the sheet with the service account e-mail as an editor. Set `CLAUDE_MODEL` in the
-workflow `env` to a model that the Claude gateway serves. Other settings (agent, model,
-runs, concurrency, retries, error limit, sheet ID) are in the same `env` block.
+Share the sheet with the service account e-mail as an editor. `CLAUDE_MODEL` and
+`CLAUDE_EFFORT` in the workflow `env` set the model and effort of Claude Code; the model
+must be one that the Claude gateway serves. Other settings (agent, model, runs,
+concurrency, retries, error limit, sheet ID) are in the same `env` block.
 
-## Test from a branch
+## Test a change
 
-`issue_comment` runs only the workflow file on the default branch. For testing, the
-workflow also has a TEST ONLY `push` trigger: a push to the branch
-`compare-auto-with-human` whose commit message contains `[compare]` runs the branch
-version of the workflow for pull request 3 (`PR_NUMBER` in the workflow env), without
-comments on the pull request. It uses the secrets of the repository. Remove the `push`
-trigger and the test pull request number before the workflow goes to main.
+`issue_comment` runs only the workflow file on the default branch. To test a change to
+the workflow before it reaches main, push it to the default branch of a fork, add the
+secrets there, open a pull request inside the fork and comment on it.

@@ -59,17 +59,26 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("startsWith(github.event.comment.body, '/compare-auto-with-human')", condition)
         self.assertIn('github.event.issue.pull_request', condition)
         self.assertIn('"OWNER","MEMBER","COLLABORATOR"', condition)
+        self.assertEqual(list(WORKFLOW['on']), ['issue_comment'])
         self.assertEqual(WORKFLOW['on']['issue_comment']['types'], ['created'])
         self.assertEqual(WORKFLOW['permissions'], {})
+        self.assertEqual(WORKFLOW['env']['PR_NUMBER'], '${{ github.event.issue.number }}')
 
-    def test_test_push_needs_the_tag_and_stays_off_the_pr(self):
-        # TEST ONLY trigger: a push to the branch runs only with [compare] and never comments.
-        self.assertEqual(WORKFLOW['on']['push']['branches'], ['compare-auto-with-human'])
-        self.assertIn("contains(github.event.head_commit.message, '[compare]')", WORKFLOW['jobs']['check']['if'])
-        for job, name in [('check', 'Acknowledge the comment'), ('check', 'Report a start failure'),
-                          ('report', 'Comment on the pull request')]:
-            self.assertIn("github.event_name == 'issue_comment'", step(job, name)['if'])
-        self.assertNotIn('github.event.issue.number }}', yaml.dump(WORKFLOW['jobs']))
+    def test_claude_model_and_effort_are_set(self):
+        env = WORKFLOW['env']
+        self.assertNotEqual(env['CLAUDE_MODEL'], 'CHANGE_ME')
+        self.assertIn(env['CLAUDE_EFFORT'], ['low', 'medium', 'high', 'xhigh', 'max'])
+        for job, name in [('prepare', 'Let Claude find the human adapter and pair the tasks'),
+                          ('report', 'Let Claude judge the result')]:
+            self.assertIn('--effort "$CLAUDE_EFFORT"', step(job, name)['run'])
+            self.assertIn('export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL%/v1}"', step(job, name)['run'])
+
+    def test_pr_comment_gives_the_verdict_line(self):
+        comment = step('report', 'Comment on the pull request')
+        self.assertEqual(comment['if'], 'always()')
+        self.assertIn('result.json', comment['env']['RESULT'])
+        self.assertIn("cell.split('\\n').pop()", comment['with']['script'])
+        self.assertIn("'@\\u200b'", comment['with']['script'])
 
     def test_matrix_matches_runs_per_side(self):
         matrix = WORKFLOW['jobs']['run']['strategy']['matrix']
@@ -226,6 +235,10 @@ class JobConfigTest(unittest.TestCase):
         for side, run in [('both', 'run1'), ('human', 'oracle')]:
             with self.assertRaises(ValueError):
                 job_config.build(side, run, 5, self.ENV)
+
+    def test_api_base_ends_with_v1(self):
+        for url in ['https://gw', 'https://gw/', 'https://gw/v1', 'https://gw/v1/ ']:
+            self.assertEqual(job_config.api_base(url), 'https://gw/v1')
 
 
 class StatsTest(unittest.TestCase):

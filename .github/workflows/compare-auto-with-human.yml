@@ -12,26 +12,19 @@ name: Compare auto with human
 on:
   issue_comment:
     types: [created]
-  # TEST ONLY, remove before this workflow goes to main: issue_comment runs only the
-  # workflow on the default branch, so a push to this branch with "[compare]" in the
-  # commit message runs the branch version for TEST_PR instead.
-  push:
-    branches: [compare-auto-with-human]
 
 permissions: {}
 
 concurrency:
   # Only comparison comments share a group, so other comments cannot replace a queued comparison.
   group: >-
-    ${{ github.event_name == 'push' && 'compare-auto-with-human-test'
-        || (startsWith(github.event.comment.body, '/compare-auto-with-human')
-            && format('compare-auto-with-human-{0}', github.event.issue.number)
-            || format('ignore-{0}', github.run_id)) }}
+    ${{ startsWith(github.event.comment.body, '/compare-auto-with-human')
+        && format('compare-auto-with-human-{0}', github.event.issue.number)
+        || format('ignore-{0}', github.run_id) }}
   cancel-in-progress: false
 
 env:
-  # The pull request to compare: the commented one, or TEST_PR (3) for a test push.
-  PR_NUMBER: ${{ github.event_name == 'push' && '3' || github.event.issue.number }}
+  PR_NUMBER: ${{ github.event.issue.number }}   # the commented pull request
   SHEET_ID: 1PaB_ANK9yBeI4aohMD-KEmhkSeXEFaMLjEnHZUx5YRY
   SHEET_TAB: Sheet1
   AGENT: terminus-2
@@ -41,17 +34,16 @@ env:
   N_CONCURRENT: '10'          # trials per run job; max-parallel 4 -> at most 40 sandboxes
   MAX_RETRIES: '2'            # Harbor retries infra errors only (its default exclude list)
   ERROR_LIMIT: '0.10'         # a run with more failed trials than this fraction makes the comparison fail
-  CLAUDE_MODEL: CHANGE_ME     # TODO: a Claude model ID that the Claude gateway serves
+  CLAUDE_MODEL: claude-opus-5-5   # a model that the Claude gateway (ANTHROPIC_BASE_URL) serves
+  CLAUDE_EFFORT: high             # Claude Code --effort: low, medium, high, xhigh or max
   CLAUDE_CODE_VERSION: 2.1.318
 
 jobs:
   check:
     if: >-
-      (github.event_name == 'push' && contains(github.event.head_commit.message, '[compare]')) ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       startsWith(github.event.comment.body, '/compare-auto-with-human') &&
-       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/compare-auto-with-human') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -65,13 +57,6 @@ jobs:
       adapter: ${{ steps.pr.outputs.adapter }}
       harbor: ${{ steps.harbor.outputs.version }}
     steps:
-      - name: Check the settings
-        run: |
-          if [ "$CLAUDE_MODEL" = CHANGE_ME ]; then
-            echo "Set CLAUDE_MODEL in the workflow env to a model that the Claude gateway serves."
-            exit 1
-          fi
-
       - name: Read the pull request
         id: pr
         uses: actions/github-script@v9
@@ -101,7 +86,6 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Acknowledge the comment
-        if: github.event_name == 'issue_comment'
         uses: actions/github-script@v9
         env:
           SHA: ${{ steps.pr.outputs.sha }}
@@ -118,7 +102,7 @@ jobs:
                     `(Harbor ${process.env.HARBOR}). Run: ${run}` });
 
       - name: Report a start failure
-        if: failure() && github.event_name == 'issue_comment'
+        if: failure()
         uses: actions/github-script@v9
         with:
           script: |
@@ -130,7 +114,7 @@ jobs:
   prepare:
     needs: check
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     permissions:
       contents: read
       pull-requests: read
@@ -178,7 +162,7 @@ jobs:
 
       - name: Let Claude find the human adapter and pair the tasks
         continue-on-error: true
-        timeout-minutes: 40
+        timeout-minutes: 90   # Opus took 8-18 min in tests (31-36 turns)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
@@ -189,10 +173,12 @@ jobs:
           DISABLE_AUTOUPDATER: '1'
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
         run: |
+          # Claude Code adds /v1/messages itself, so drop a trailing /v1 from the gateway URL.
+          ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL%/}"; export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL%/v1}"
           fetch="bash $RUNNER_TEMP/tools/fetch.sh"
           { cat "$RUNNER_TEMP/tools/prepare.md"; printf '\nThe fetch command is: %s\n' "$fetch"; } > "$RUNNER_TEMP/prepare-prompt.md"
           claude -p --allowedTools Read Glob Grep Write "Bash($fetch:*)" \
-            --max-turns 100 --output-format json \
+            --effort "$CLAUDE_EFFORT" --max-turns 100 --output-format json \
             < "$RUNNER_TEMP/prepare-prompt.md" > work/prepare-claude.json
 
       - name: Check Claude's choice and build the comparison folders
@@ -261,7 +247,7 @@ jobs:
     needs: [check, prepare, run]
     if: always() && needs.check.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     permissions:
       contents: read
       issues: write
@@ -310,7 +296,7 @@ jobs:
       - name: Let Claude judge the result
         if: needs.prepare.outputs.status == 'ok'
         continue-on-error: true
-        timeout-minutes: 60
+        timeout-minutes: 90
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
@@ -321,8 +307,9 @@ jobs:
           DISABLE_AUTOUPDATER: '1'
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
         run: |
+          ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL%/}"; export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL%/v1}"
           claude -p --allowedTools Read Glob Grep Write \
-            --max-turns 150 --output-format json \
+            --effort "$CLAUDE_EFFORT" --max-turns 150 --output-format json \
             < "$RUNNER_TEMP/tools/analyze.md" > work/analyze-claude.json
 
       - name: Write the report
@@ -358,12 +345,23 @@ jobs:
             work/
           if-no-files-found: warn
 
+      # The comment gives the verdict line (match / no match with the cause / failed), not the scores.
       - name: Comment on the pull request
-        if: always() && github.event_name == 'issue_comment'
+        if: always()
         uses: actions/github-script@v9
+        env:
+          RESULT: ${{ runner.temp }}/report/result.json
         with:
           script: |
+            const fs = require('fs');
             const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            let verdict = 'the report step did not finish';
+            try {
+              const cell = JSON.parse(fs.readFileSync(process.env.RESULT, 'utf8')).cell || '';
+              verdict = cell.split('\n').pop().slice(0, 400);
+            } catch (e) {}
+            // Claude wrote the cause: keep @-names from notifying anyone.
+            verdict = verdict.replace(/@(?=[A-Za-z0-9])/g, '@\u200b');
             await github.rest.issues.createComment({
               ...context.repo, issue_number: context.issue.number,
-              body: `Comparison finished. The result is in the tracking sheet and in the run summary: ${run}` });
+              body: `Comparison finished: ${verdict}\n\nDetails are in the tracking sheet and in the run summary: ${run}` });
