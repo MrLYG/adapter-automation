@@ -1,0 +1,369 @@
+name: Compare auto with human
+
+# A maintainer comments `/compare-auto-with-human` on an AutoAdapter pull request.
+# The workflow runs the same agent on the agent-built dataset and on the human
+# dataset of the same benchmark, lets Claude judge the result, and writes it to
+# the tracking sheet. Steps:
+#   check   - who asked, which adapter, which Harbor version (no keys)
+#   prepare - Claude finds the human adapter and pairs the tasks (Anthropic key only)
+#   run     - 2 sides x 5 agent runs on Daytona (Daytona + model keys)
+#   report  - scores, Claude's verdict, REPORT.md, sheet row, PR comment
+
+on:
+  issue_comment:
+    types: [created]
+  # TEST ONLY, remove before this workflow goes to main: issue_comment runs only the
+  # workflow on the default branch, so a push to this branch with "[compare]" in the
+  # commit message runs the branch version for TEST_PR instead.
+  push:
+    branches: [compare-auto-with-human]
+
+permissions: {}
+
+concurrency:
+  # Only comparison comments share a group, so other comments cannot replace a queued comparison.
+  group: >-
+    ${{ github.event_name == 'push' && 'compare-auto-with-human-test'
+        || (startsWith(github.event.comment.body, '/compare-auto-with-human')
+            && format('compare-auto-with-human-{0}', github.event.issue.number)
+            || format('ignore-{0}', github.run_id)) }}
+  cancel-in-progress: false
+
+env:
+  # The pull request to compare: the commented one, or TEST_PR (3) for a test push.
+  PR_NUMBER: ${{ github.event_name == 'push' && '3' || github.event.issue.number }}
+  SHEET_ID: 1PaB_ANK9yBeI4aohMD-KEmhkSeXEFaMLjEnHZUx5YRY
+  SHEET_TAB: Sheet1
+  AGENT: terminus-2
+  AGENT_MODEL: openai/deepseek-v4.1-flash
+  AGENT_MAX_TOKENS: '65536'
+  RUNS_PER_SIDE: '5'          # keep equal to the run1..runN entries of the run matrix
+  N_CONCURRENT: '10'          # trials per run job; max-parallel 4 -> at most 40 sandboxes
+  MAX_RETRIES: '2'            # Harbor retries infra errors only (its default exclude list)
+  ERROR_LIMIT: '0.10'         # a run with more failed trials than this fraction makes the comparison fail
+  CLAUDE_MODEL: CHANGE_ME     # TODO: a Claude model ID that the Claude gateway serves
+  CLAUDE_CODE_VERSION: 2.1.318
+
+jobs:
+  check:
+    if: >-
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[compare]')) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '/compare-auto-with-human') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    outputs:
+      sha: ${{ steps.pr.outputs.sha }}
+      pr_url: ${{ steps.pr.outputs.pr_url }}
+      author: ${{ steps.pr.outputs.author }}
+      adapter: ${{ steps.pr.outputs.adapter }}
+      harbor: ${{ steps.harbor.outputs.version }}
+    steps:
+      - name: Check the settings
+        run: |
+          if [ "$CLAUDE_MODEL" = CHANGE_ME ]; then
+            echo "Set CLAUDE_MODEL in the workflow env to a model that the Claude gateway serves."
+            exit 1
+          fi
+
+      - name: Read the pull request
+        id: pr
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const number = Number(process.env.PR_NUMBER);
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
+            const files = await github.paginate(github.rest.pulls.listFiles,
+              { ...context.repo, pull_number: number, per_page: 100 });
+            const adapters = [...new Set(files
+              .map(f => (f.filename.match(/^src\/([^/]+)\//) || [])[1])
+              .filter(Boolean))];
+            if (adapters.length !== 1) {
+              core.setFailed(`Expected one adapter folder under src/, found: ${adapters.join(', ') || 'none'}`);
+              return;
+            }
+            core.setOutput('sha', pr.head.sha);
+            core.setOutput('pr_url', pr.html_url);
+            core.setOutput('author', pr.user.login);
+            core.setOutput('adapter', adapters[0]);
+
+      - name: Find the latest Harbor release
+        id: harbor
+        run: |
+          version=$(curl -fsSL https://pypi.org/pypi/harbor/json | jq -r .info.version)
+          [[ "$version" =~ ^[0-9][0-9A-Za-z.+-]*$ ]] || { echo "Bad Harbor version: $version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Acknowledge the comment
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v9
+        env:
+          SHA: ${{ steps.pr.outputs.sha }}
+          ADAPTER: ${{ steps.pr.outputs.adapter }}
+          HARBOR: ${{ steps.harbor.outputs.version }}
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              ...context.repo, comment_id: context.payload.comment.id, content: 'eyes' });
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              ...context.repo, issue_number: context.issue.number,
+              body: `Comparison started for \`${process.env.ADAPTER}\` at ${process.env.SHA.slice(0, 7)} ` +
+                    `(Harbor ${process.env.HARBOR}). Run: ${run}` });
+
+      - name: Report a start failure
+        if: failure() && github.event_name == 'issue_comment'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              ...context.repo, issue_number: context.issue.number,
+              body: `Comparison could not start. Run: ${run}` });
+
+  prepare:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      status: ${{ steps.select.outputs.status }}
+    steps:
+      - name: Check out the comparison scripts from main
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/compare
+          persist-credentials: false
+
+      # Claude can write files in the workspace, so every script runs from a read-only copy.
+      - name: Copy the scripts out of the workspace
+        run: |
+          cp -r .github/compare "$RUNNER_TEMP/tools"
+          chmod -R a-w "$RUNNER_TEMP/tools"
+          rm -rf .github
+
+      - name: Collect the inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ needs.check.outputs.pr_url }}
+          SHA: ${{ needs.check.outputs.sha }}
+          ADAPTER: ${{ needs.check.outputs.adapter }}
+        run: |
+          mkdir -p work
+          gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json number,title,body,url,author,headRefOid,files > work/pr.json
+          jq -n --arg pr "$PR_NUMBER" --arg url "$PR_URL" --arg sha "$SHA" --arg adapter "$ADAPTER" \
+            '{pr_number: ($pr | tonumber), pr_url: $url, pr_sha: $sha, auto_adapter: $adapter}' > work/inputs.json
+          # The human adapters (the whole repository is a few MB).
+          git clone -q --depth 1 https://github.com/harbor-framework/adapters work/adapters
+          git -C work/adapters rev-parse HEAD > work/adapters.commit
+          rm -rf work/adapters/.git
+          gh api repos/harbor-framework/harbor-datasets/contents/datasets \
+            --jq '.[] | select(.type == "dir") | .name' > work/human-datasets.txt
+          # Harbor's legacy registry: some datasets have a "parity" version with the task list.
+          curl -fsSL https://raw.githubusercontent.com/laude-institute/harbor/main/registry.json -o work/registry.json
+
+      - name: Install Claude Code
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_CODE_VERSION"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Let Claude find the human adapter and pair the tasks
+        continue-on-error: true
+        timeout-minutes: 40
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_MODEL: ${{ env.CLAUDE_MODEL }}
+          ANTHROPIC_DEFAULT_OPUS_MODEL: ${{ env.CLAUDE_MODEL }}
+          ANTHROPIC_DEFAULT_SONNET_MODEL: ${{ env.CLAUDE_MODEL }}
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ env.CLAUDE_MODEL }}
+          DISABLE_AUTOUPDATER: '1'
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+        run: |
+          fetch="bash $RUNNER_TEMP/tools/fetch.sh"
+          { cat "$RUNNER_TEMP/tools/prepare.md"; printf '\nThe fetch command is: %s\n' "$fetch"; } > "$RUNNER_TEMP/prepare-prompt.md"
+          claude -p --allowedTools Read Glob Grep Write "Bash($fetch:*)" \
+            --max-turns 100 --output-format json \
+            < "$RUNNER_TEMP/prepare-prompt.md" > work/prepare-claude.json
+
+      - name: Check Claude's choice and build the comparison folders
+        id: select
+        run: python3 "$RUNNER_TEMP/tools/build_pairs.py" --work work --out compare
+
+      - name: Upload the comparison folders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compare
+          path: compare/
+          if-no-files-found: warn
+
+  run:
+    needs: [check, prepare]
+    if: needs.prepare.outputs.status == 'ok'
+    name: run (${{ matrix.side }}, ${{ matrix.run }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        # run is listed first, so the two sides start in turn (auto, human, auto, ...).
+        run: [run1, run2, run3, run4, run5]
+        side: [auto, human]
+    steps:
+      - name: Check out the comparison scripts from main
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/compare
+          persist-credentials: false
+
+      - name: Download the comparison folders
+        uses: actions/download-artifact@v4
+        with:
+          name: compare
+          path: compare
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Run Harbor
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          SIDE: ${{ matrix.side }}
+          RUN: ${{ matrix.run }}
+          HARBOR_VERSION: ${{ needs.check.outputs.harbor }}
+        run: |
+          python3 .github/compare/job_config.py --side "$SIDE" --run "$RUN" --pr "$PR_NUMBER" > job.json
+          uvx --python 3.12 --from "harbor[daytona]==$HARBOR_VERSION" harbor run -c job.json -y
+
+      - name: Upload the job
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-${{ matrix.side }}-${{ matrix.run }}
+          path: jobs/
+          if-no-files-found: warn
+
+  report:
+    needs: [check, prepare, run]
+    if: always() && needs.check.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Check out the comparison scripts from main
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/compare
+          persist-credentials: false
+
+      - name: Copy the scripts out of the workspace
+        run: |
+          cp -r .github/compare "$RUNNER_TEMP/tools"
+          chmod -R a-w "$RUNNER_TEMP/tools"
+          rm -rf .github
+
+      - name: Download the comparison folders
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: compare
+          path: compare
+
+      - name: Download the jobs
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: job-*
+          path: jobs
+
+      # The trusted numbers live outside the workspace; Claude gets a copy in work/.
+      - name: Compute the scores
+        run: |
+          mkdir -p "$RUNNER_TEMP/stats" work
+          python3 "$RUNNER_TEMP/tools/stats.py" --compare compare --jobs jobs \
+            --runs "$RUNS_PER_SIDE" --error-limit "$ERROR_LIMIT" --out "$RUNNER_TEMP/stats"
+          cp "$RUNNER_TEMP/stats/stats.json" "$RUNNER_TEMP/stats/pertask.csv" work/
+
+      - name: Install Claude Code
+        if: needs.prepare.outputs.status == 'ok'
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_CODE_VERSION"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Let Claude judge the result
+        if: needs.prepare.outputs.status == 'ok'
+        continue-on-error: true
+        timeout-minutes: 60
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_MODEL: ${{ env.CLAUDE_MODEL }}
+          ANTHROPIC_DEFAULT_OPUS_MODEL: ${{ env.CLAUDE_MODEL }}
+          ANTHROPIC_DEFAULT_SONNET_MODEL: ${{ env.CLAUDE_MODEL }}
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ env.CLAUDE_MODEL }}
+          DISABLE_AUTOUPDATER: '1'
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+        run: |
+          claude -p --allowedTools Read Glob Grep Write \
+            --max-turns 150 --output-format json \
+            < "$RUNNER_TEMP/tools/analyze.md" > work/analyze-claude.json
+
+      - name: Write the report
+        env:
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          RUN_RESULT: ${{ needs.run.result }}
+          PR_URL: ${{ needs.check.outputs.pr_url }}
+          PR_SHA: ${{ needs.check.outputs.sha }}
+          AUTHOR: ${{ needs.check.outputs.author }}
+          ADAPTER: ${{ needs.check.outputs.adapter }}
+          HARBOR_VERSION: ${{ needs.check.outputs.harbor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 "$RUNNER_TEMP/tools/report.py" --stats "$RUNNER_TEMP/stats/stats.json" \
+            --compare compare --work work --out "$RUNNER_TEMP/report"
+          cp "$RUNNER_TEMP/report/REPORT.md" REPORT.md
+          cat REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Write the sheet row
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          python3 -m pip install --quiet 'gspread>=6,<7'
+          python3 "$RUNNER_TEMP/tools/sheet.py" --result "$RUNNER_TEMP/report/result.json"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report
+          path: |
+            REPORT.md
+            work/
+          if-no-files-found: warn
+
+      - name: Comment on the pull request
+        if: always() && github.event_name == 'issue_comment'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              ...context.repo, issue_number: context.issue.number,
+              body: `Comparison finished. The result is in the tracking sheet and in the run summary: ${run}` });
