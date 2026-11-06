@@ -173,7 +173,7 @@ done
 
 Use a new run name for every original-side run (`run_parity.sh` refuses an existing one, so each run makes fresh model calls). The accuracy of a Harbor run is the job's mean reward × 100. Standard CLI agent check: `harbor run -p datasets/bfcl-autoadapter -a terminus-2 -m openai/deepseek-v4.1-flash -e daytona --ek auto_snapshot=true` with one `-i bfcl-autoadapter__<id>` filter per ID in `cli_check_task_ids.json` (ID lowercased, `_` → `-`).
 
-**Links.** Original benchmark: [ShishirPatil/gorilla › berkeley-function-call-leaderboard](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard). Original-side fork: [MrLYG/gorilla@harbor-parity](https://github.com/MrLYG/gorilla/tree/harbor-parity). Adapter PR: ADAPTER_PR_LINK. Dataset PR: DATASET_PR_LINK. Parity results: PARITY_PR_LINK.
+**Links.** Original benchmark: [ShishirPatil/gorilla › berkeley-function-call-leaderboard](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard). Original-side fork: [MrLYG/gorilla@harbor-parity](https://github.com/MrLYG/gorilla/tree/harbor-parity) (commit [`ad0f5cc`](https://github.com/MrLYG/gorilla/commit/ad0f5cc083a4c12480c7ebc2c76410e0e74e60e2)). Adapter PR: [harbor-index/adapter-automation#7](https://github.com/harbor-index/adapter-automation/pull/7). Dataset PR: [harbor-framework/harbor-datasets#275](https://github.com/harbor-framework/harbor-datasets/pull/275). Parity results: [harborframework/parity-experiments#279](https://huggingface.co/datasets/harborframework/parity-experiments/discussions/279).
 
 ## Notes & Caveats
 
