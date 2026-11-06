@@ -14,6 +14,12 @@ import re
 import sys
 
 
+def api_base(url):
+    """The OpenAI-style base URL with /v1 at the end, as the agent's LiteLLM client needs it."""
+    url = url.strip().rstrip("/")
+    return url if url.endswith("/v1") else url + "/v1"
+
+
 def build(side, run, pr, env):
     if side not in ("auto", "human"):
         raise ValueError(f"bad side: {side}")
@@ -23,7 +29,7 @@ def build(side, run, pr, env):
         "name": env["AGENT"],
         "model_name": env["AGENT_MODEL"],
         "kwargs": {
-            "api_base": env["OPENAI_BASE_URL"],
+            "api_base": api_base(env["OPENAI_BASE_URL"]),
             "llm_call_kwargs": {"max_tokens": int(env["AGENT_MAX_TOKENS"])},
         },
     }
