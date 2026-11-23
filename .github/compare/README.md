@@ -12,14 +12,27 @@ Comment on the pull request:
 /compare-auto-with-human
 ```
 
+Settings can follow the command on the same line. A setting that is not given keeps
+the default of the workflow `env`:
+
+```
+/compare-auto-with-human timeout-multiplier=5 model=openai/deepseek-v4.1-flash concurrency=20
+```
+
+| Setting | Meaning | Default (`env`) |
+|---|---|---|
+| `timeout-multiplier` | Harbor multiplies every task time limit by this value, on both sides | `TIMEOUT_MULTIPLIER` |
+| `model` | model of the agent, with its LiteLLM prefix | `AGENT_MODEL` |
+| `concurrency` | trials that one run job runs at the same time | `N_CONCURRENT` |
+
 Only owners, members and collaborators of this repository can start it. Comment again
 to run it again. The result goes to the tracking sheet and to the run summary; the pull
 request gets only the run link.
 
 ## What it does
 
-1. `check`: reads the pull request (adapter folder, author, head commit) and the latest
-   Harbor version. No keys.
+1. `check`: reads the pull request (adapter folder, author, head commit), the latest
+   Harbor version and the settings in the comment. No keys.
 2. `prepare`: Claude finds the human adapter (same original repository link in its
    README), fetches both published datasets from harbor-framework/harbor-datasets (the
    dataset pull request of the auto adapter, and main for the human one) and pairs the
@@ -44,6 +57,7 @@ request gets only the run link.
 | `prepare.md` | prepare | Instructions for Claude: human adapter, datasets, parity set, pairs |
 | `fetch.sh` | prepare | The only command Claude can run: fetch one dataset folder, or list the human parity runs on Hugging Face |
 | `build_pairs.py` | prepare | Check Claude's files, keep the human parity set, build the comparison folders |
+| `options.py` | check | The settings that follow the command in the comment |
 | `job_config.py` | run | Harbor JobConfig for one side and run |
 | `stats.py` | report | Scores, kept runs, overlap, per-problem table |
 | `analyze.md` | report | Instructions for Claude: verdict and cause |

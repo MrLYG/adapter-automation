@@ -25,6 +25,7 @@ def load(name):
 
 build_pairs = load('build_pairs')
 job_config = load('job_config')
+options = load('options')
 stats = load('stats')
 report = load('report')
 sheet = load('sheet')
@@ -241,6 +242,46 @@ class JobConfigTest(unittest.TestCase):
     def test_api_base_ends_with_v1(self):
         for url in ['https://gw', 'https://gw/', 'https://gw/v1', 'https://gw/v1/ ']:
             self.assertEqual(job_config.api_base(url), 'https://gw/v1')
+
+
+class OptionsTest(unittest.TestCase):
+    ENV = {'TIMEOUT_MULTIPLIER': '20', 'AGENT_MODEL': 'openai/default', 'N_CONCURRENT': '40'}
+
+    def test_defaults_come_from_the_workflow_env(self):
+        for body in ['/compare-auto-with-human', '/compare-auto-with-human  \nmodel=openai/x on line 2']:
+            self.assertEqual(options.parse(body, self.ENV),
+                             {'timeout_multiplier': '20', 'agent_model': 'openai/default', 'n_concurrent': '40'})
+
+    def test_comment_settings_replace_the_defaults(self):
+        body = '/compare-auto-with-human timeout-multiplier=2.5 model=openai/deepseek-v4.1-flash concurrency=10'
+        self.assertEqual(options.parse(body, self.ENV),
+                         {'timeout_multiplier': '2.5', 'agent_model': 'openai/deepseek-v4.1-flash',
+                          'n_concurrent': '10'})
+        self.assertEqual(options.parse('/compare-auto-with-human concurrency=5', self.ENV)['timeout_multiplier'], '20')
+
+    def test_bad_settings_fail(self):
+        for words in ['timeout=5', 'model', 'timeout-multiplier=0', 'timeout-multiplier=fast',
+                      'concurrency=1.5', 'concurrency=0', 'model=$(id)', 'model=a;b',
+                      'concurrency=5 concurrency=6']:
+            with self.assertRaises(ValueError, msg=words):
+                options.parse(f'/compare-auto-with-human {words}', self.ENV)
+        with self.assertRaises(ValueError):
+            options.parse('/compare-auto-with-humans', self.ENV)
+
+    def test_workflow_passes_the_settings_to_the_run_and_the_report(self):
+        read = step('check', 'Read the settings from the comment')
+        self.assertEqual(read['env'], {'COMMENT_BODY': '${{ github.event.comment.body }}'})
+        self.assertNotIn('github.event', read['run'])
+        outputs = WORKFLOW['jobs']['check']['outputs']
+        for name in ('agent_model', 'timeout_multiplier', 'n_concurrent'):
+            self.assertEqual(outputs[name], '${{ steps.options.outputs.%s }}' % name)
+        run = step('run', 'Run Harbor')['env']
+        self.assertEqual(run['AGENT_MODEL'], '${{ needs.check.outputs.agent_model }}')
+        self.assertEqual(run['TIMEOUT_MULTIPLIER'], '${{ needs.check.outputs.timeout_multiplier }}')
+        self.assertEqual(run['N_CONCURRENT'], '${{ needs.check.outputs.n_concurrent }}')
+        report_env = step('report', 'Write the report')['env']
+        self.assertEqual(report_env['AGENT_MODEL'], '${{ needs.check.outputs.agent_model }}')
+        self.assertEqual(report_env['TIMEOUT_MULTIPLIER'], '${{ needs.check.outputs.timeout_multiplier }}')
 
 
 class StatsTest(unittest.TestCase):
