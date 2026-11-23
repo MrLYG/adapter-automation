@@ -222,7 +222,7 @@ class BuildPairsTest(unittest.TestCase):
 
 
 class JobConfigTest(unittest.TestCase):
-    ENV = {'AGENT': 'terminus-2', 'AGENT_MODEL': 'openai/m', 'AGENT_MAX_TOKENS': '65536',
+    ENV = {'AGENT': 'terminus-2', 'AGENT_MODEL': 'm', 'AGENT_MAX_TOKENS': '65536',
            'TIMEOUT_MULTIPLIER': '20', 'N_CONCURRENT': '10', 'MAX_RETRIES': '2',
            'OPENAI_BASE_URL': 'https://gw/v1'}
 
@@ -245,19 +245,19 @@ class JobConfigTest(unittest.TestCase):
 
 
 class OptionsTest(unittest.TestCase):
-    ENV = {'TIMEOUT_MULTIPLIER': '20', 'AGENT_MODEL': 'openai/default', 'N_CONCURRENT': '40'}
+    ENV = {'TIMEOUT_MULTIPLIER': '1', 'AGENT_MODEL': 'default', 'N_CONCURRENT': '40'}
 
     def test_defaults_come_from_the_workflow_env(self):
-        for body in ['/compare-auto-with-human', '/compare-auto-with-human  \nmodel=openai/x on line 2']:
+        for body in ['/compare-auto-with-human', '/compare-auto-with-human  \nmodel=x on line 2']:
             self.assertEqual(options.parse(body, self.ENV),
-                             {'timeout_multiplier': '20', 'agent_model': 'openai/default', 'n_concurrent': '40'})
+                             {'timeout_multiplier': '1', 'agent_model': 'default', 'n_concurrent': '40'})
 
     def test_comment_settings_replace_the_defaults(self):
-        body = '/compare-auto-with-human timeout-multiplier=2.5 model=openai/deepseek-v4.1-flash concurrency=10'
+        body = '/compare-auto-with-human timeout-multiplier=2.5 model=deepseek-v4.1-flash concurrency=10'
         self.assertEqual(options.parse(body, self.ENV),
-                         {'timeout_multiplier': '2.5', 'agent_model': 'openai/deepseek-v4.1-flash',
+                         {'timeout_multiplier': '2.5', 'agent_model': 'deepseek-v4.1-flash',
                           'n_concurrent': '10'})
-        self.assertEqual(options.parse('/compare-auto-with-human concurrency=5', self.ENV)['timeout_multiplier'], '20')
+        self.assertEqual(options.parse('/compare-auto-with-human concurrency=5', self.ENV)['timeout_multiplier'], '1')
 
     def test_bad_settings_fail(self):
         for words in ['timeout=5', 'model', 'timeout-multiplier=0', 'timeout-multiplier=fast',

@@ -28,9 +28,9 @@ env:
   SHEET_ID: 1PaB_ANK9yBeI4aohMD-KEmhkSeXEFaMLjEnHZUx5YRY
   SHEET_TAB: Sheet1
   AGENT: terminus-2
-  AGENT_MODEL: openai/deepseek-v4-flash      # default; the comment can give model=<name>
+  AGENT_MODEL: deepseek-v4-flash   # default; the name that the model gateway uses; the comment can give model=<name>
   AGENT_MAX_TOKENS: '65536'
-  TIMEOUT_MULTIPLIER: '20'    # default; Harbor multiplies every task time limit by this value on both sides
+  TIMEOUT_MULTIPLIER: '1'     # default; Harbor multiplies every task time limit by this value on both sides
   RUNS_PER_SIDE: '5'          # keep equal to the run1..runN entries of the run matrix
   N_CONCURRENT: '40'          # default; trials per run job; max-parallel 3 -> at most 120 sandboxes
   MAX_RETRIES: '2'            # Harbor retries infra errors only (its default exclude list)
