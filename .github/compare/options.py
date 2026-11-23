@@ -4,7 +4,7 @@
   options.py        (reads COMMENT_BODY and the workflow env, prints name=value lines)
 
 Example comment:
-  /compare-auto-with-human timeout-multiplier=5 model=openai/deepseek-v4.1-flash concurrency=20
+  /compare-auto-with-human timeout-multiplier=20 model=deepseek-v4.1-flash concurrency=20
 
 Only the first line of the comment is read. A setting that is not in the comment keeps
 the value of the workflow env (TIMEOUT_MULTIPLIER, AGENT_MODEL, N_CONCURRENT). The

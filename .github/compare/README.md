@@ -16,13 +16,13 @@ Settings can follow the command on the same line. A setting that is not given ke
 the default of the workflow `env`:
 
 ```
-/compare-auto-with-human timeout-multiplier=5 model=openai/deepseek-v4.1-flash concurrency=20
+/compare-auto-with-human timeout-multiplier=20 model=deepseek-v4.1-flash concurrency=20
 ```
 
 | Setting | Meaning | Default (`env`) |
 |---|---|---|
 | `timeout-multiplier` | Harbor multiplies every task time limit by this value, on both sides | `TIMEOUT_MULTIPLIER` |
-| `model` | model of the agent, with its LiteLLM prefix | `AGENT_MODEL` |
+| `model` | model of the agent, the name that the model gateway uses | `AGENT_MODEL` |
 | `concurrency` | trials that one run job runs at the same time | `N_CONCURRENT` |
 
 Only owners, members and collaborators of this repository can start it. Comment again

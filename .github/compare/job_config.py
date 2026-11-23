@@ -5,7 +5,9 @@
 
 Settings come from the workflow env: AGENT, AGENT_MODEL, AGENT_MAX_TOKENS,
 TIMEOUT_MULTIPLIER, N_CONCURRENT, MAX_RETRIES and OPENAI_BASE_URL. The agent reads
-OPENAI_API_KEY itself; no key is written into the config.
+OPENAI_API_KEY itself; no key is written into the config. AGENT_MODEL is the name that
+the model gateway uses. The gateway has the OpenAI API, so the agent's LiteLLM client
+gets the name with the prefix openai/.
 """
 import argparse
 import json
@@ -27,7 +29,7 @@ def build(side, run, pr, env):
         raise ValueError(f"bad run: {run}")
     agent = {
         "name": env["AGENT"],
-        "model_name": env["AGENT_MODEL"],
+        "model_name": "openai/" + env["AGENT_MODEL"],
         "kwargs": {
             "api_base": api_base(env["OPENAI_BASE_URL"]),
             "llm_call_kwargs": {"max_tokens": int(env["AGENT_MAX_TOKENS"])},
