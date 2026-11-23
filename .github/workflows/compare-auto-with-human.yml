@@ -28,10 +28,11 @@ env:
   SHEET_ID: 1PaB_ANK9yBeI4aohMD-KEmhkSeXEFaMLjEnHZUx5YRY
   SHEET_TAB: Sheet1
   AGENT: terminus-2
-  AGENT_MODEL: openai/deepseek-v4.1-flash
+  AGENT_MODEL: openai/deepseek-v4-flash
   AGENT_MAX_TOKENS: '65536'
+  TIMEOUT_MULTIPLIER: '20'    # Harbor multiplies every task time limit by this value on both sides
   RUNS_PER_SIDE: '5'          # keep equal to the run1..runN entries of the run matrix
-  N_CONCURRENT: '10'          # trials per run job; max-parallel 4 -> at most 40 sandboxes
+  N_CONCURRENT: '40'          # trials per run job; max-parallel 3 -> at most 120 sandboxes
   MAX_RETRIES: '2'            # Harbor retries infra errors only (its default exclude list)
   ERROR_LIMIT: '0.10'         # a run with more failed trials than this fraction makes the comparison fail
   CLAUDE_MODEL: claude-opus-5-5   # a model that the Claude gateway (ANTHROPIC_BASE_URL) serves
@@ -203,7 +204,7 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 3
       matrix:
         # run is listed first, so the two sides start in turn (auto, human, auto, ...).
         run: [run1, run2, run3, run4, run5]

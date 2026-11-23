@@ -4,8 +4,8 @@
   job_config.py --side auto|human --run run1..runN --pr <number>
 
 Settings come from the workflow env: AGENT, AGENT_MODEL, AGENT_MAX_TOKENS,
-N_CONCURRENT, MAX_RETRIES and OPENAI_BASE_URL. The agent reads OPENAI_API_KEY
-itself; no key is written into the config.
+TIMEOUT_MULTIPLIER, N_CONCURRENT, MAX_RETRIES and OPENAI_BASE_URL. The agent reads
+OPENAI_API_KEY itself; no key is written into the config.
 """
 import argparse
 import json
@@ -37,6 +37,7 @@ def build(side, run, pr, env):
         "job_name": f"{side}-{run}",
         "jobs_dir": "jobs",
         "n_concurrent_trials": int(env["N_CONCURRENT"]),
+        "timeout_multiplier": float(env["TIMEOUT_MULTIPLIER"]),
         "retry": {"max_retries": int(env["MAX_RETRIES"])},
         "environment": {
             "type": "daytona",

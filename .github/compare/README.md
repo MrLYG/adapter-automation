@@ -30,7 +30,7 @@ request gets only the run link.
    If there is no list, `build_pairs.py` draws the same number of paired problems with
    random seed 0. `build_pairs.py` checks Claude's files and builds `compare/auto/` and
    `compare/human/`. Anthropic key only.
-3. `run`: 10 jobs, 2 sides x 5 agent runs, on Daytona, at most 4 at a time. No oracle run:
+3. `run`: 10 jobs, 2 sides x 5 agent runs, on Daytona, at most 3 at a time. No oracle run:
    both datasets passed the oracle when they were published.
    Daytona and model keys only.
 4. `report`: `stats.py` computes the scores (drop the highest and lowest run, mean ± SEM
@@ -69,8 +69,8 @@ Repository secrets (Settings > Secrets and variables > Actions > Secrets):
 
 Share the sheet with the service account e-mail as an editor. `CLAUDE_MODEL` and
 `CLAUDE_EFFORT` in the workflow `env` set the model and effort of Claude Code; the model
-must be one that the Claude gateway serves. Other settings (agent, model, runs,
-concurrency, retries, error limit, sheet ID) are in the same `env` block.
+must be one that the Claude gateway serves. Other settings (agent, model, time limit
+multiplier, runs, concurrency, retries, error limit, sheet ID) are in the same `env` block.
 
 ## Test a change
 
