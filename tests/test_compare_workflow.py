@@ -222,13 +222,15 @@ class BuildPairsTest(unittest.TestCase):
 
 class JobConfigTest(unittest.TestCase):
     ENV = {'AGENT': 'terminus-2', 'AGENT_MODEL': 'openai/m', 'AGENT_MAX_TOKENS': '65536',
-           'N_CONCURRENT': '10', 'MAX_RETRIES': '2', 'OPENAI_BASE_URL': 'https://gw/v1'}
+           'TIMEOUT_MULTIPLIER': '20', 'N_CONCURRENT': '10', 'MAX_RETRIES': '2',
+           'OPENAI_BASE_URL': 'https://gw/v1'}
 
     def test_agent_runs_only(self):
         agent = job_config.build('auto', 'run3', 5, self.ENV)
         self.assertEqual(agent['job_name'], 'auto-run3')
         self.assertEqual(agent['agents'][0]['model_name'], 'openai/m')
         self.assertEqual(agent['agents'][0]['kwargs']['api_base'], 'https://gw/v1')
+        self.assertEqual(agent['timeout_multiplier'], 20.0)
         self.assertEqual(agent['retry'], {'max_retries': 2})
         self.assertEqual(agent['datasets'], [{'path': 'compare/auto'}])
         self.assertNotIn('KEY', json.dumps(agent))
