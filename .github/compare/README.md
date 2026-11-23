@@ -12,14 +12,27 @@ Comment on the pull request:
 /compare-auto-with-human
 ```
 
+Settings can follow the command on the same line. A setting that is not given keeps
+the default of the workflow `env`:
+
+```
+/compare-auto-with-human timeout-multiplier=5 model=openai/deepseek-v4.1-flash concurrency=20
+```
+
+| Setting | Meaning | Default (`env`) |
+|---|---|---|
+| `timeout-multiplier` | Harbor multiplies every task time limit by this value, on both sides | `TIMEOUT_MULTIPLIER` |
+| `model` | model of the agent, with its LiteLLM prefix | `AGENT_MODEL` |
+| `concurrency` | trials that one run job runs at the same time | `N_CONCURRENT` |
+
 Only owners, members and collaborators of this repository can start it. Comment again
 to run it again. The result goes to the tracking sheet and to the run summary; the pull
 request gets only the run link.
 
 ## What it does
 
-1. `check`: reads the pull request (adapter folder, author, head commit) and the latest
-   Harbor version. No keys.
+1. `check`: reads the pull request (adapter folder, author, head commit), the latest
+   Harbor version and the settings in the comment. No keys.
 2. `prepare`: Claude finds the human adapter (same original repository link in its
    README), fetches both published datasets from harbor-framework/harbor-datasets (the
    dataset pull request of the auto adapter, and main for the human one) and pairs the
@@ -30,7 +43,7 @@ request gets only the run link.
    If there is no list, `build_pairs.py` draws the same number of paired problems with
    random seed 0. `build_pairs.py` checks Claude's files and builds `compare/auto/` and
    `compare/human/`. Anthropic key only.
-3. `run`: 10 jobs, 2 sides x 5 agent runs, on Daytona, at most 4 at a time. No oracle run:
+3. `run`: 10 jobs, 2 sides x 5 agent runs, on Daytona, at most 3 at a time. No oracle run:
    both datasets passed the oracle when they were published.
    Daytona and model keys only.
 4. `report`: `stats.py` computes the scores (drop the highest and lowest run, mean ± SEM
@@ -44,6 +57,7 @@ request gets only the run link.
 | `prepare.md` | prepare | Instructions for Claude: human adapter, datasets, parity set, pairs |
 | `fetch.sh` | prepare | The only command Claude can run: fetch one dataset folder, or list the human parity runs on Hugging Face |
 | `build_pairs.py` | prepare | Check Claude's files, keep the human parity set, build the comparison folders |
+| `options.py` | check | The settings that follow the command in the comment |
 | `job_config.py` | run | Harbor JobConfig for one side and run |
 | `stats.py` | report | Scores, kept runs, overlap, per-problem table |
 | `analyze.md` | report | Instructions for Claude: verdict and cause |
@@ -69,8 +83,8 @@ Repository secrets (Settings > Secrets and variables > Actions > Secrets):
 
 Share the sheet with the service account e-mail as an editor. `CLAUDE_MODEL` and
 `CLAUDE_EFFORT` in the workflow `env` set the model and effort of Claude Code; the model
-must be one that the Claude gateway serves. Other settings (agent, model, runs,
-concurrency, retries, error limit, sheet ID) are in the same `env` block.
+must be one that the Claude gateway serves. Other settings (agent, model, time limit
+multiplier, runs, concurrency, retries, error limit, sheet ID) are in the same `env` block.
 
 ## Test a change
 

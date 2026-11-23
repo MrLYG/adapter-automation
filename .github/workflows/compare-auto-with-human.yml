@@ -4,7 +4,7 @@ name: Compare auto with human
 # The workflow runs the same agent on the agent-built dataset and on the human
 # dataset of the same benchmark, lets Claude judge the result, and writes it to
 # the tracking sheet. Steps:
-#   check   - who asked, which adapter, which Harbor version (no keys)
+#   check   - who asked, which adapter, which Harbor version, the settings in the comment (no keys)
 #   prepare - Claude finds the human adapter and pairs the tasks (Anthropic key only)
 #   run     - 2 sides x 5 agent runs on Daytona (Daytona + model keys)
 #   report  - scores, Claude's verdict, REPORT.md, sheet row, PR comment
@@ -28,10 +28,11 @@ env:
   SHEET_ID: 1PaB_ANK9yBeI4aohMD-KEmhkSeXEFaMLjEnHZUx5YRY
   SHEET_TAB: Sheet1
   AGENT: terminus-2
-  AGENT_MODEL: openai/deepseek-v4.1-flash
+  AGENT_MODEL: openai/deepseek-v4-flash      # default; the comment can give model=<name>
   AGENT_MAX_TOKENS: '65536'
+  TIMEOUT_MULTIPLIER: '20'    # default; Harbor multiplies every task time limit by this value on both sides
   RUNS_PER_SIDE: '5'          # keep equal to the run1..runN entries of the run matrix
-  N_CONCURRENT: '10'          # trials per run job; max-parallel 4 -> at most 40 sandboxes
+  N_CONCURRENT: '40'          # default; trials per run job; max-parallel 3 -> at most 120 sandboxes
   MAX_RETRIES: '2'            # Harbor retries infra errors only (its default exclude list)
   ERROR_LIMIT: '0.10'         # a run with more failed trials than this fraction makes the comparison fail
   CLAUDE_MODEL: claude-opus-5-5   # a model that the Claude gateway (ANTHROPIC_BASE_URL) serves
@@ -56,6 +57,9 @@ jobs:
       author: ${{ steps.pr.outputs.author }}
       adapter: ${{ steps.pr.outputs.adapter }}
       harbor: ${{ steps.harbor.outputs.version }}
+      agent_model: ${{ steps.options.outputs.agent_model }}
+      timeout_multiplier: ${{ steps.options.outputs.timeout_multiplier }}
+      n_concurrent: ${{ steps.options.outputs.n_concurrent }}
     steps:
       - name: Read the pull request
         id: pr
@@ -85,12 +89,28 @@ jobs:
           [[ "$version" =~ ^[0-9][0-9A-Za-z.+-]*$ ]] || { echo "Bad Harbor version: $version"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Check out the comparison scripts from main
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/compare
+          persist-credentials: false
+
+      # The comment text goes to the script as an env value; it is not part of a command.
+      - name: Read the settings from the comment
+        id: options
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: python3 .github/compare/options.py >> "$GITHUB_OUTPUT"
+
       - name: Acknowledge the comment
         uses: actions/github-script@v9
         env:
           SHA: ${{ steps.pr.outputs.sha }}
           ADAPTER: ${{ steps.pr.outputs.adapter }}
           HARBOR: ${{ steps.harbor.outputs.version }}
+          MODEL: ${{ steps.options.outputs.agent_model }}
+          MULTIPLIER: ${{ steps.options.outputs.timeout_multiplier }}
+          CONCURRENT: ${{ steps.options.outputs.n_concurrent }}
         with:
           script: |
             await github.rest.reactions.createForIssueComment({
@@ -99,7 +119,8 @@ jobs:
             await github.rest.issues.createComment({
               ...context.repo, issue_number: context.issue.number,
               body: `Comparison started for \`${process.env.ADAPTER}\` at ${process.env.SHA.slice(0, 7)} ` +
-                    `(Harbor ${process.env.HARBOR}). Run: ${run}` });
+                    `(Harbor ${process.env.HARBOR}, ${process.env.MODEL}, time limits x ${process.env.MULTIPLIER}, ` +
+                    `${process.env.CONCURRENT} trials at a time for each run job). Run: ${run}` });
 
       - name: Report a start failure
         if: failure()
@@ -203,7 +224,7 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 3
       matrix:
         # run is listed first, so the two sides start in turn (auto, human, auto, ...).
         run: [run1, run2, run3, run4, run5]
@@ -231,6 +252,9 @@ jobs:
           SIDE: ${{ matrix.side }}
           RUN: ${{ matrix.run }}
           HARBOR_VERSION: ${{ needs.check.outputs.harbor }}
+          AGENT_MODEL: ${{ needs.check.outputs.agent_model }}
+          TIMEOUT_MULTIPLIER: ${{ needs.check.outputs.timeout_multiplier }}
+          N_CONCURRENT: ${{ needs.check.outputs.n_concurrent }}
         run: |
           python3 .github/compare/job_config.py --side "$SIDE" --run "$RUN" --pr "$PR_NUMBER" > job.json
           uvx --python 3.12 --from "harbor[daytona]==$HARBOR_VERSION" harbor run -c job.json -y
@@ -321,6 +345,8 @@ jobs:
           AUTHOR: ${{ needs.check.outputs.author }}
           ADAPTER: ${{ needs.check.outputs.adapter }}
           HARBOR_VERSION: ${{ needs.check.outputs.harbor }}
+          AGENT_MODEL: ${{ needs.check.outputs.agent_model }}
+          TIMEOUT_MULTIPLIER: ${{ needs.check.outputs.timeout_multiplier }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           python3 "$RUNNER_TEMP/tools/report.py" --stats "$RUNNER_TEMP/stats/stats.json" \
